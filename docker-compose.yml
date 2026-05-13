@@ -1,0 +1,23 @@
+# docker-compose standalone del frontend
+# Asume que alumnos-app ya esta corriendo en la red compartida alumnos-network
+# Para levantar el backend: cd ../alumnos-app && docker compose up -d
+# Para crear la red (solo la primera vez): docker network create alumnos-network
+services:
+
+  alumnos-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: alumnos-web:latest
+    container_name: alumnos-web
+    environment:
+      BACKEND_HOST: alumnos-app
+    ports:
+      - "80:80"
+    restart: unless-stopped
+    networks:
+      - alumnos-network
+
+networks:
+  alumnos-network:
+    external: true

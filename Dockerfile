@@ -1,29 +1,40 @@
-# STAGE 1: BUILD
-
-FROM node:22-alpine AS build
-
+# ── Etapa 1: Dependencias ─────────────────────────────────────────────────────
+FROM node:20-alpine AS deps
 WORKDIR /app
-
-COPY package*.json ./
-
+COPY package.json ./
 RUN npm install
 
+# ── Etapa 2: Tests + Cobertura ────────────────────────────────────────────────
+# Si la cobertura < 90% el build se DETIENE aquí (exit code != 0)
+FROM deps AS test
 COPY . .
+RUN npm run test:coverage
 
+# ── Etapa 3: Build de producción ──────────────────────────────────────────────
+# Hereda de test → si los tests fallan, esta etapa nunca se ejecuta
+FROM test AS build
 RUN npm run build
+# Sin VITE_API_URL: el frontend usa rutas relativas (/alumnos)
+# Nginx hace el proxy interno: /alumnos → http://backend:8080
 
-# STAGE 2: RUNTIME
+# ── Etapa 4: Servidor estático con Nginx ──────────────────────────────────────
+FROM nginx:1.27-alpine AS runtime
 
-FROM nginx:stable-alpine
+# Instalar envsubst (viene en gettext)
+RUN apk add --no-cache gettext
 
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Copiar nginx.conf como template — contiene ${BACKEND_HOST}
+COPY nginx.conf /etc/nginx/conf.d/default.conf.template
 
 COPY --from=build /app/dist /usr/share/nginx/html
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-RUN chown -R appuser:appgroup /usr/share/nginx/html
-
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:80 || exit 1
+
+# Al arrancar: reemplaza ${BACKEND_HOST} con la variable de entorno real
+# Ejemplo local:  docker run -e BACKEND_HOST=backend ...
+# Ejemplo AWS:    docker run -e BACKEND_HOST=10.0.1.45 ...
+CMD ["/bin/sh", "-c", \
+  "envsubst '$BACKEND_HOST' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
